@@ -1,0 +1,356 @@
+---
+title: "P8106_midterm"
+author: "yimin chen yc4195"
+date: "2023-03-26"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = T, message = FALSE, results='hide', warning=FALSE}
+library(tidyverse)
+library(caret)
+library(mgcv)
+library(patchwork)
+library(rpart)
+library(rpart.plot)
+library(party)
+library(randomForest)
+library(ranger)
+library(e1071)
+library(pdp)
+library(earth)
+library(splines)
+library(pdp)
+library(ggplot2)
+library(gridExtra)
+library(glmnet)
+library(MASS)
+library(pROC)
+library(vip)
+library(AppliedPredictiveModeling)
+library(klaR)
+```
+
+
+## import and Data
+```{r, import}
+set.seed(4195) 
+load("recovery.Rdata")
+dat <- dat[sample(1:10000, 2000),]
+dat <- dat[,-1]%>%
+    mutate(study = case_when( # from character variable to a numeric variable
+    study == "A" ~ 1,
+    study == "B" ~ 2,
+    study == "C" ~ 3)) %>%
+    mutate(
+    gender = as.factor(gender),
+    race = as.factor(race),
+    smoking = as.factor(smoking),
+    hypertension = as.factor(hypertension),
+    diabetes = as.factor(diabetes),
+    vaccine = as.factor(vaccine),
+    severity = as.factor(severity),
+    study = as.factor(study)
+  )
+skimr::skim_without_charts(dat)
+```
+
+# Data
+
+This project uses the "recovery.RData" file, which consists of 10000 participants. A random sample of 2000 participants is used for this analysis using a seed set to my UNI number (2183).
+
+Split the data into training (70%) and test (30%) sets
+
+
+## Create x and y matrices for modeling
+```{r, model_matrices}
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 5,
+                     number=10)
+set.seed(4195)
+traindata <- createDataPartition(dat$recovery_time, p = 0.7, list = FALSE)
+traindataset <- dat[traindata,]
+testdataset <- dat[-traindata,]
+#train
+x = model.matrix(recovery_time ~ ., dat)[traindata,-1]
+y = traindataset$recovery_time
+
+#test
+x_test = model.matrix(recovery_time ~ ., dat)[-traindata,-1]
+y_test = testdataset$recovery_time
+
+```
+
+
+
+# Exploratory analysis and data visualization:
+
+In this section, use appropriate visualization techniques to explore the dataset and identify any patterns or relationships in the data.
+
+```{r}
+# create dataset for exploratory analysis and data visualization
+traindataset1 <- traindataset%>%
+    mutate(
+    gender = as.numeric(gender),
+    race = as.numeric(race),
+    smoking = as.numeric(smoking),
+    hypertension = as.numeric(hypertension),
+    diabetes = as.numeric(diabetes),
+    vaccine = as.numeric(vaccine),
+    severity = as.numeric(severity),
+    study = as.numeric(study))
+# Find the remaining non-numeric columns
+#non_numeric_cols <- sapply(traindataset1, function(x) !is.numeric(x))
+#non_numeric_cols
+# Convert non-numeric columns to numeric
+#traindataset1[, non_numeric_cols] <- lapply(traindataset1[, non_numeric_cols], as.numeric) # turn factor variables into numeric variables
+```
+
+```{r,warning=FALSE}
+theme1 = trellis.par.get()
+theme1$plot.symbol$col = rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch = 16
+theme1$plot.line$col = rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd = 2
+theme1$strip.background$col = rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+## Exploratory analysis and visualization
+featurePlot(x = traindataset1[ ,1:14],
+            y = traindataset1[ ,15],
+            plot = "scatter",
+            span = .5,
+            #layout=c(4,4),
+            labels = c("Predictors", "Recovery Time"),
+            type = c("p", "smooth"))
+```
+The following code creates lattice plots to visualize the the multivariate data. A plot is created for each of the 14 predictors in the dataset in order to visualize each predictor's association with the outcome, `recovery_time` (COVID-19 recovery time).
+
+
+[Based on the lattice plots above, the following patterns in the data can be observed: ]
+
+# Model training:
+
+In this section, describe the models you used for predicting time to recovery from COVID-19. State the assumptions made by using the models. Provide a detailed description of the model training procedure and how you obtained the final model.
+
+## Less flexible models: 
+
+## Fit a linear model:
+
+```{r lm,cache=TRUE}
+set.seed(4195)
+# Fit a linear regression model using cross-validation on the training dataset
+lm.fit <- train(recovery_time ~ age + gender + race + smoking + height + weight + 
+                 bmi + hypertension + diabetes + SBP + LDL + vaccine + 
+                 severity + study, 
+               data = traindataset, 
+               method = "lm", 
+               trControl = ctrl)
+# model summary
+summary(lm.fit$finalModel)
+# RMSE
+test_pred_lm <- predict(lm.fit, newdata = testdataset)
+test_rmse_lm <- sqrt(mean((test_pred_lm -y_test)^2))
+test_rmse_lm
+```
+
+
+/*
+We then use the train function from the caret package to fit a linear regression model to the training data using cross-validation with 10 folds. The trainControl function specifies the cross-validation method, and the method argument specifies the type of model to fit (in this case, linear regression). The resulting model object contains the final model and information about the cross-validation performance.
+
+We can view the summary statistics for the final model using the summary function on the finalModel object within the model object. We can also use the predict function to generate predictions for the test set using the final model, and compute the root mean squared error (RMSE) between the predicted and actual recovery times on the test set.
+
+This approach allows us to obtain a final model that has been trained using cross-validation, which can help to reduce overfitting and improve the generalization performance of the model on new, unseen data.
+*/
+
+## Fit Ridge Regression
+```{r, ridge, cache=TRUE}
+set.seed(4195)
+ridge.fit = train(x, y,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = 0,
+                                         lambda = exp(seq(-1, 5, length = 100))),
+                  trControl = ctrl)
+ridge_pred = predict(ridge.fit$finalModel, newx = x_test, s = ridge.fit$bestTune$lambda, type = "response")
+# model summary
+summary(ridge.fit$finalModel)
+# RMSE
+test_pred_ridge <- predict(ridge.fit, newdata = data.frame(x_test))
+test_rmse_ridge <- sqrt(mean((test_pred_ridge -y_test)^2))
+test_rmse_ridge
+```
+RMSE = `r test_rmse_ridge `
+
+
+
+
+Lasso model:
+
+```{r, lasso, cache=TRUE}
+set.seed(4195)
+lasso.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1,
+                                          lambda = exp(seq(-1, 5, length = 100))),
+                   trControl = ctrl)
+# view the model summary
+summary(lasso.fit$finalModel)
+# view performance on the test set (RMSE)
+lasso_pred <- predict(lasso.fit, newdata = data.frame(x_test))
+test_rmse_lasso<- sqrt(mean((lasso_pred - y_test)^2))
+test_rmse_lasso
+```
+RMSE = `r test_rmse_lasso `
+
+Elastic net model:
+
+```{r,cache=TRUE}
+set.seed(4195)
+enet.fit <- train(x, y,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), 
+                                         lambda = exp(seq(2, -2, length = 50))),
+                  trControl = ctrl)
+# view the model summary
+summary(enet.fit$finalModel)
+# view performance on the test set (RMSE)
+enet_pred <- predict(enet.fit, data.frame(x_test))
+test_rmse_enet <- sqrt(mean((enet_pred - y_test)^2))
+test_rmse_enet
+# calculate RMSE
+sqrt(mean((enet_pred - y_test)^2)) 
+```
+RMSE = `r test_rmse_enet `
+
+
+Partial least squares model:
+```{r,cache=TRUE}
+set.seed(4195)
+pls.fit <- train(x, y,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:15), 
+                 trControl = ctrl,
+                 preProcess = c("center", "scale"))
+# view the model summary
+summary(pls.fit$finalModel)
+# view performance on the test set (RMSE)
+pls_pred <- predict(pls.fit, data.frame(x_test))
+test_rmse_pls <- sqrt(mean((pls_pred - y_test))^2)
+test_rmse_pls
+```
+RMSE = `r test_rmse_pls `
+
+## More flexible models: 
+
+Generalized additive model (GAM):
+
+```{r,warning=FALSE,cache=TRUE}
+set.seed(4195)
+# fit GAM using all predictors
+gamall.fit <- train(x, y, # test dataset
+                 method = "gam",
+                 trControl = ctrl, # 10-fold CV
+                 control = gam.control(maxit = 200)) # Adjusted due to failure to converge at default setting
+# fit GAM using selection specification
+gamselect.fit <- train(x, y, # test dataset
+                 method = "gam",
+                 tuneGrid = data.frame(method = "GCV.Cp", select = c(TRUE)),
+                 trControl = ctrl, # 10-fold CV
+                 control = gam.control(maxit = 200))  # Adjusted due to failure to converge at default setting
+
+# view the model summary
+summary(gamall.fit$finalModel)
+gamall.fit$bestTune
+gamall.fit$finalModel
+# view performance on the test set (RMSE)
+gamall_pred <- predict(gamall.fit, data.frame(x_test))
+test_rmse_gamall <- sqrt(mean((gamall_pred - y_test))^2)
+test_rmse_gamall
+# calculate RMSE
+sqrt(mean((gamall_pred - y_test))^2) 
+
+# view the model summary
+summary(gamselect.fit$finalModel)
+gamselect.fit$bestTune
+gamselect.fit$finalModel
+# view performance on the test set (RMSE)
+gamselect_pred <- predict(gamselect.fit, data.frame(x_test))
+test_rmse_gamselect <- sqrt(mean((gamselect_pred - y_test))^2)
+test_rmse_gamselect
+
+```
+
+RMSE for gam_all= `r test_rmse_gamall `
+RMSE for gam_select= `r test_rmse_gamselect `
+
+
+Multivariate adaptive regression spline (MARS) model:
+
+```{r,cache=TRUE}
+set.seed(4195)
+# create grid of all possible pairs that can take degree and nprune values
+mars_grid <- expand.grid(degree = 1:3, # number of possible product hinge functions in 1 term
+                         nprune = 2:20) # Upper bound of number of terms in model
+mars.fit <- train(x,
+                  y,# training dataset
+                  method = "earth",
+                  tuneGrid = mars_grid,
+                  trControl = ctrl)
+# view the model summary
+summary(mars.fit$finalModel)
+# view performance on the test set (RMSE)
+mars_pred <- predict(mars.fit, data.frame(x_test))
+test_rmse_mars <- sqrt(mean((mars_pred - y_test))^2)
+test_rmse_mars
+```
+RMSE = `r test_rmse_mars `
+
+
+```{r ,lda,cache=TRUE}
+## Perform LDA using the training data
+#set.seed(4195)
+#lda.fit = lda(recovery_time~., data = dat,
+               #subset = traindata)
+
+#Plot the linear discriminants in LDA
+#plot(lda.fit)
+#lda.pred <- predict(lda.fit, newdata = testdataset)
+#head(lda.pred$posterior)
+#lda.fit$scaling
+
+```
+
+
+
+Model comparison:
+
+## Boxplot
+```{r, boxplot}
+set.seed(4195)
+resamp = resamples(list(linear=lm.fit,
+                        ridge = ridge.fit,
+                        lasso = lasso.fit,
+                        enet = enet.fit,
+                        pls = pls.fit,
+                        gamall = gamall.fit,
+                        gamselect = gamselect.fit,
+                        mars = mars.fit))
+summary(resamp)
+bwplot(resamp, metric = "RMSE")
+
+```
+
+# Results:
+
+In this section, report the final model that you built for predicting time to recovery from COVID-19. Interpret the results. Assess the model's training/test performance.
+
+```{r}
+```
+
+# Conclusions:
+
+In this section, summarize your findings from the model analysis and discuss the insights gained into predicting time to recovery from COVID-19.
+
+
