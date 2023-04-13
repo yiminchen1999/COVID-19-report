@@ -51,4 +51,4 @@ The aim of this project is to develop a prediction model for the duration of COV
 
 Through the implementation of these models, we have gained valuable insights into key predictors that could be used to inform future self-prevention strategies and healthcare services. Out of all the models utilized, the GAM model provided the most accurate forecast for total COVID-19 recovery time. Analysis of the GAM results indicated that body mass index (BMI) and weight are the two significant predictors. Given this, maintaining a healthy lifestyle is crucial during pandemics, as managing weight and maintaining a healthy BMI may potentially reduce recovery time.
 
-![image](https://user-images.githubusercontent.com/112905250/231612759-59694324-a129-46b5-9c3a-16c6dd7a8c8f.png)
+
